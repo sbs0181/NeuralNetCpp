@@ -8,6 +8,9 @@
 #include <iostream>
 #include <ctime>
 #include <random>
+#include <fstream>
+#include <string>
+#include <sstream>
 
 using namespace std;
 
@@ -136,7 +139,7 @@ void set_seed() {
 }
 
 double unifrnd() {
-	return ((double)rand()) / ((double)RAND_MAX);
+	return 2.0*((double)rand()) / ((double)RAND_MAX)-1.0;
 }
 
 vector<double> unifrnd(int n) {
@@ -168,13 +171,13 @@ Weights::Weights(int n_inputs, int n_outputs) {
 
 class Layer {
 public:
-	vector<double> neurons;
-	
-	vector<double> desired;
+vector<double> neurons;
 
-	vector<double> delta;
-	void set_delta(Layer L, Weights W);
-	Layer() {};
+vector<double> desired;
+
+vector<double> delta;
+void set_delta(Layer L, Weights W);
+Layer() {};
 };
 
 void Layer::set_delta(Layer L, Weights W) {
@@ -189,183 +192,114 @@ void Layer::set_delta(Layer L, Weights W) {
 	}
 }
 
+double phi(double x) {
+	return 1.0 / (1.0 + exp(-x));
+}
+
+vector<double> phi(vector<double> v) {
+	vector<double> p(v.size());
+	transform(v.begin(), v.end(), p.begin(), static_cast<double(*)(double)>(&phi));
+	return p;
+}
+
 void FeedForward(vector<Layer*> Layers, vector<Weights*> Weightss) {
 	for (int i = 1; i < Layers.size(); i++) {
-		(Layers[i])->neurons = ((Weightss[i - 1])->w.Transpose())*((Layers[i - 1])->neurons);
+		(Layers[i])->neurons = phi(((Weightss[i - 1])->w.Transpose())*((Layers[i - 1])->neurons));
 	}
 }
 
 void BackPropagate(vector<Layer*> Layers, vector<Weights*> Weightss) {
-	double speed = 0.1;
+	double speed = 1;
 	Matrix dweights;
 	int i = (Weightss.size() - 1);
 	Layers[i + 1]->set_delta(*Layers[i + 1], *Weightss[i]);
 	dweights = ScalarTimesMatrix(-speed, OuterProduct(Layers[i]->neurons, Layers[i + 1]->delta));
 	Weightss[i]->w = Weightss[i]->w + dweights;
-	for (int i = (Weightss.size()-2); i >=0; i--) {
-		Layers[i + 1]->set_delta(*Layers[i + 2], *Weightss[i+1]);
+	for (int i = (Weightss.size() - 2); i >= 0; i--) {
+		Layers[i + 1]->set_delta(*Layers[i + 2], *Weightss[i + 1]);
 		dweights = ScalarTimesMatrix(-speed, OuterProduct(Layers[i]->neurons, Layers[i + 1]->delta));
 		Weightss[i]->w = Weightss[i]->w + dweights;
 	}
 }
 
+vector<Weights> RunNetwork(double speed, vector<double> inputs, vector<double> desired_outputs, int num_layers, int num_steps = 1, vector<Weights> Wvec = {}) {
+	cout << "running...\n";
+	vector<Layer> Lvec(num_layers);
+	Lvec[0].neurons = inputs;
+	Lvec[Lvec.size() - 1].desired = desired_outputs;
+	if (Wvec.size() == 0) {
+		for (int i = 0; i < num_layers - 2; i++) {
+			Weights W(inputs.size(), inputs.size());
+			W.w = ScalarTimesMatrix(pow(1.0 / 784.0,2.0), W.w);
+			Wvec.push_back(W);
+		}
+		Weights W(inputs.size(), desired_outputs.size());
+		Wvec.push_back(W); 
+		W.w = ScalarTimesMatrix(pow(1.0 / 784.0, 2.0), W.w);
+	}
+	vector<Layer*>Lvec_pointers(Lvec.size());
+	transform(Lvec.begin(), Lvec.end(), Lvec_pointers.begin(), [](Layer &l) {return &l; });
+	vector<Weights*>Wvec_pointers(Wvec.size());
+	transform(Wvec.begin(), Wvec.end(), Wvec_pointers.begin(), [](Weights &w) {return &w; });
+	for (int i = 0; i < num_steps; i++) {
+
+		FeedForward(Lvec_pointers, Wvec_pointers);
+		BackPropagate(Lvec_pointers, Wvec_pointers);
+	}
+	cout << "Error: " << pow(Lvec[Lvec.size() - 1].neurons[0] - Lvec[Lvec.size() - 1].desired[0], 2.0) << "\n";
+	return Wvec;
+}
+
+class training_data {
+public:
+	vector<double> labels;
+	vector<vector<double>> data;
+
+	training_data(string);
+};
+
+vector<string> getNextLineAndSplitIntoTokens(istream& str) {
+	vector<string> result;
+	string line;
+	getline(str, line);
+
+	stringstream lineStream(line);
+	string cell;
+
+	while (getline(lineStream, cell, ',')) {
+		result.push_back(cell);
+	}
+	return result;
+}
+
+training_data::training_data(string filename) {
+	ifstream myfile("mnist_train.csv");
+	vector<string> S(1);
+	S = getNextLineAndSplitIntoTokens(myfile);
+	int i = 0;
+	while (i < 100) {
+		labels.push_back(stod(S[0],nullptr)/10.0);
+		vector<double> dataline(S.size() - 1);
+		transform(S.begin() + 1, S.end(), dataline.begin(), [](string s) {return stod(s, nullptr)/255.0; });
+		data.push_back(dataline);
+		S = getNextLineAndSplitIntoTokens(myfile);
+		i++;
+	}
+}
 
 
 int main() {
 	set_seed();
+	training_data train("mnist_train.csv");
+
 	double speed = 0.1;
-	Layer L1, L2, L3, L4;
-	L1.neurons = ScalarTimesVector(0.1,unifrnd(4));
-	L4.desired = unifrnd(2);
-	Weights W1(4, 4);
-	Weights W2(4, 4);
-	Weights W3(4, 2);
-	//L2.neurons = W.w.Transpose()*L1.neurons;
-	vector<Layer*> Lvec = { &L1,&L2,&L3,&L4 };
-	vector<Weights*> Wvec{ &W1,&W2,&W3 };
-	FeedForward(Lvec, Wvec);
-	PrintVector(L4.neurons);
-	
-	//Matrix dweights=ScalarTimesMatrix(-speed,OuterProduct(L1.neurons,L2.delta()));
-	//W.w = W.w + dweights;
-	//PrintVector((dweights).m[0]);
-	for (int i = 0; i < 1000; i++) {
-		BackPropagate(Lvec, Wvec);
-		FeedForward(Lvec, Wvec);
-		PrintVector(L4.neurons);
+	int num_layers = 2;
+	int num_steps = 100;
+	vector<Weights> Wvec;
+	Wvec = RunNetwork(speed, train.data[0], { train.labels[0] }, num_layers, num_steps);
+	for (int i = 1; i < train.labels.size(); i++) {
+		Wvec = RunNetwork(speed, train.data[i], { train.labels[i] }, num_layers, num_steps, Wvec);
 	}
-	PrintVector(L4.desired);
 	system("pause");
 	return 0;
 }
-
-
-
-
-
-
-
-/*
-double phi(double x) { return 1.0 / (1.0 + exp(-x)); }
-
-class Neuron {
-public:
-	vector<double> inputweights;
-	vector<double> outputweights;
-
-	vector<double> inputvalues;
-	vector<double> outputdeltas;
-
-	double value;
-	double speed;
-	double delta;
-
-	void SetInputValues(vector<Neuron>);
-	void SetOutputDeltas(vector<Neuron>);
-
-	void Forward();
-	void Backward();
-};
-
-void Neuron::SetInputValues(vector<Neuron> nvec) {
-	vector<double> iv(nvec.size());
-	transform(nvec.begin(), nvec.end(), iv.begin(), [](Neuron n) {return n.value; });
-	inputvalues = iv;
-}
-
-void Neuron::SetOutputDeltas(vector<Neuron> nvec) {
-	vector<double> od(nvec.size());
-	transform(nvec.begin(), nvec.end(), od.begin(), [](Neuron n) {return n.delta; });
-	outputdeltas = od;
-}
-
-void Neuron::Forward() {
-	vector<double> newvec(inputweights.size());
-	transform(inputweights.begin(), inputweights.end(), inputvalues.begin(), newvec.begin(), [](double w, double v) {return w*v; });
-	value = phi(accumulate(newvec.begin(), newvec.end(), 0.0));
-}
-
-void Neuron::Backward() {
-	vector<double> newweights(inputweights.size());
-	transform(inputweights.begin(), inputweights.end(), inputvalues.begin(), newweights.begin(), [this](double w, double v) {return w - (this->speed)*(this->delta)*v; });
-	inputweights = newweights;
-}
-
-int main() {
-	Neuron n1, n2, n3;
-	n1.value = 1.0;
-	n2.value = 0.5;
-	n3.SetInputValues({ n1,n2 });
-	n3.inputweights={}
-
-
-	return 0;
-}
-*/
-/*
-class Neuron {
-public:
-	vector<double> weights;
-
-	double value;
-	double speed;
-
-	double delta() {};
-	
-	void evaluate(vector<Neuron>);
-	void UpdateWeights(vector<Neuron>);
-};
-
-class InputNeuron : public Neuron {
-public:
-	void evaluate(vector<Neuron>) {};
-	void evaluate(double d) { value = d; };
-
-	double delta() {};
-
-	void UpdateWeights(vector<Neuron>) {};
-};
-
-class OutputNeuron : public Neuron {
-public:
-	double desired;
-	double delta() {
-		return (value - desired)*value*(1.0 - value);
-	};
-	
-
-};
-
-void Neuron::evaluate(vector<Neuron> nvec) {
-	if (nvec.size() != weights.size()) {
-		_DEBUG_ERROR("Weights and input not equal size");
-	}
-	vector<double> vec(weights.size());
-	transform(nvec.begin(), nvec.end(), weights.begin(), vec.begin(), [](Neuron n, double d) {return d*(n.value); });
-	value = phi(accumulate(vec.begin(),vec.end(),0.0));
-
-}
-
-void Neuron::UpdateWeights(vector<Neuron> nvec) {
-	vector<double> newweights(nvec.size());
-	transform(weights.begin(), weights.end(), nvec.begin(), newweights.begin(), [this](double d, Neuron n) {return d - (this->speed)*(this->delta())*n.value; });
-}
-
-
-int main()
-{
-	InputNeuron n1;
-	InputNeuron n2;
-	OutputNeuron n3;
-	n3.weights = { 0.1,0.1 };
-
-	n1.evaluate(0.1);
-	n2.evaluate(0.2);
-	n3.evaluate({ n1,n2 });
-	cout << n3.value << endl;
-	system("pause");
-
-
-    return 0;
-}
-*/
